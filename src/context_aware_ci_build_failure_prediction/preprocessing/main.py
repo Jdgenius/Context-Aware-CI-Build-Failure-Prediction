@@ -35,7 +35,7 @@ def process_travistorrent_to_codebert_embeddings(
     This assumes the CSV fits in memory. TravisTorrent metadata likely should.
     If not, you can later split by repo using chunks.
     """
-
+    print("Reading CSV...")
     df = pd.read_csv(travistorrent_csv_path)
 
     required_cols = [repo_col, commit_col]
@@ -51,7 +51,8 @@ def process_travistorrent_to_codebert_embeddings(
             f"Warning: label_col '{label_col}' not found. "
             f"Labels will be None."
         )
-
+    print(f"Total samples in CSV: {len(df)}")
+    print("Loading RepoManager, Embedder, and ShardWriter...")
     repo_manager = TempRepoManager(temp_repo_root=temp_repo_root)
     embedder = CodeBERTEmbedder()
     writer = EmbeddingShardWriter(
@@ -72,7 +73,7 @@ def process_travistorrent_to_codebert_embeddings(
         for repo_name, repo_df in grouped:
             print(f"\nProcessing repo: {repo_name}")
             print(f"Samples: {len(repo_df)}")
-
+            print("Processing repoto embeddings...")
             process_one_repo_to_embeddings(
                 repo_name=repo_name,
                 repo_df=repo_df,

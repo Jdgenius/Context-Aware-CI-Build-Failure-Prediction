@@ -1,7 +1,7 @@
 from .main import process_travistorrent_to_codebert_embeddings
 
 process_travistorrent_to_codebert_embeddings(
-    travistorrent_csv_path="final-2017-01-25.csv",
+    travistorrent_csv_path="src/context_aware_ci_build_failure_prediction/preprocessing/final-2017-01-25.csv",
     output_dir="./embedding_shards_test",
     temp_repo_root="./temp_repos_test",
     failure_log_path="./logs/failures_test.jsonl",
