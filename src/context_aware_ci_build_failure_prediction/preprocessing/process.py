@@ -12,29 +12,60 @@ from .modules.shard_writer import EmbeddingShardWriter
 from .modules.repo_manager import DEFAULT_REPO_COL, DEFAULT_COMMIT_COL, DEFAULT_LABEL_COL
 from .modules.repo_manager import TempRepoManager
 from .helpers.embedding import CodeBERTEmbedder
-from .helpers.git_extraction import get_commit_message, get_changed_files, build_diff_string
-from .helpers.context_extraction import build_context_string
+from .helpers.git_extraction import (
+    build_commit_message_artifact,
+    build_diff_artifact,
+    get_changed_files,
+)
+from .helpers.context_extraction import build_context_artifact
+from .types import (
+    DEFAULT_BUILD_ID_COL,
+    DEFAULT_PARENT_COMMIT_COL,
+    SOURCE_ROW_INDEX_COL,
+    RawSample,
+    make_sample_id,
+    normalize_optional_value,
+)
 
 def build_raw_sample_from_row(
     row: Mapping[str, Any],
     repo_path: Path,
     repo_col: str = DEFAULT_REPO_COL,
     commit_col: str = DEFAULT_COMMIT_COL,
-    label_col: str = DEFAULT_LABEL_COL
-) -> dict[str, Any]:
-    repo_name = row[repo_col]
-    commit_sha = row[commit_col]
+    label_col: str = DEFAULT_LABEL_COL,
+    build_id_col: str | None = DEFAULT_BUILD_ID_COL,
+    parent_commit_col: str | None = DEFAULT_PARENT_COMMIT_COL,
+) -> RawSample:
+    repo_name = str(row[repo_col])
+    commit_sha = str(row[commit_col])
+    source_row_index = int(row[SOURCE_ROW_INDEX_COL])
+    build_id = (
+        normalize_optional_value(row.get(build_id_col))
+        if build_id_col is not None
+        else None
+    )
+    parent_commit_sha = (
+        normalize_optional_value(row.get(parent_commit_col))
+        if parent_commit_col is not None
+        else None
+    )
+    sample_id = make_sample_id(
+        repo=repo_name,
+        commit_sha=commit_sha,
+        build_id=build_id,
+        source_row_index=source_row_index,
+    )
 
-    commit_message = get_commit_message(repo_path, commit_sha)
+    commit_message = build_commit_message_artifact(repo_path, commit_sha)
     changed_files = get_changed_files(repo_path, commit_sha)
 
-    code_diff = build_diff_string(
+    diff = build_diff_artifact(
         repo_path=repo_path,
         commit_sha=commit_sha,
         changed_files=changed_files
     )
 
-    code_context = build_context_string(
+    context = build_context_artifact(
         repo_path=repo_path,
         commit_sha=commit_sha,
         changed_files=changed_files
@@ -42,24 +73,28 @@ def build_raw_sample_from_row(
 
     label = row.get(label_col)
 
-    return {
-        "repo": repo_name,
-        "commit_sha": commit_sha,
-        "commit_message": commit_message,
-        "code_diff": code_diff,
-        "code_context": code_context,
-        "label": label,
-    }
+    return RawSample(
+        sample_id=sample_id,
+        source_row_index=source_row_index,
+        repo=repo_name,
+        commit_sha=commit_sha,
+        parent_commit_sha=parent_commit_sha,
+        build_id=build_id,
+        label=label,
+        commit_message=commit_message,
+        diff=diff,
+        context=context,
+    )
 
 def embed_and_write_raw_batch(
-    raw_buffer: list[dict[str, Any]],
+    raw_buffer: list[RawSample],
     embedder: CodeBERTEmbedder,
     writer: EmbeddingShardWriter,
     embed_batch_size: int = 32
 ) -> None:
-    messages = [r["commit_message"] or "" for r in raw_buffer]
-    diffs = [r["code_diff"] or "" for r in raw_buffer]
-    contexts = [r["code_context"] or "" for r in raw_buffer]
+    messages = [r.commit_message.text or "" for r in raw_buffer]
+    diffs = [r.diff.text or "" for r in raw_buffer]
+    contexts = [r.context.text or "" for r in raw_buffer]
 
     message_embeddings = embedder.embed_texts(
         messages,
@@ -78,12 +113,12 @@ def embed_and_write_raw_batch(
 
     for i, raw in enumerate(raw_buffer):
         writer.add({
-            "repo": raw["repo"],
-            "commit_sha": raw["commit_sha"],
+            "repo": raw.repo,
+            "commit_sha": raw.commit_sha,
             "message_embedding": message_embeddings[i],
             "diff_embedding": diff_embeddings[i],
             "context_embedding": context_embeddings[i],
-            "label": raw["label"],
+            "label": raw.label,
         })
 
 def process_one_repo_to_embeddings(
@@ -96,6 +131,8 @@ def process_one_repo_to_embeddings(
     repo_col: str = DEFAULT_REPO_COL,
     commit_col: str = DEFAULT_COMMIT_COL,
     label_col: str = DEFAULT_LABEL_COL,
+    build_id_col: str | None = DEFAULT_BUILD_ID_COL,
+    parent_commit_col: str | None = DEFAULT_PARENT_COMMIT_COL,
     embed_batch_size: int = 32,
     raw_batch_size: int = 64
 ) -> None:
@@ -119,7 +156,7 @@ def process_one_repo_to_embeddings(
             {str(k): v for k, v in row.to_dict().items()}
             for _, row in repo_df.iterrows()
         ]
-        raw_buffer = []
+        raw_buffer: list[RawSample] = []
 
         for row in tqdm(rows, desc=f"Extracting raw samples for {repo_name}"):
             commit_sha = row[commit_col]
@@ -132,7 +169,9 @@ def process_one_repo_to_embeddings(
                     repo_path=repo_path,
                     repo_col=repo_col,
                     commit_col=commit_col,
-                    label_col=label_col
+                    label_col=label_col,
+                    build_id_col=build_id_col,
+                    parent_commit_col=parent_commit_col,
                 )
 
                 raw_buffer.append(raw_sample)

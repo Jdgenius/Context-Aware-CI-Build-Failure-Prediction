@@ -6,6 +6,11 @@ from .modules.repo_manager import DEFAULT_REPO_COL, DEFAULT_COMMIT_COL, DEFAULT_
 from .modules.shard_writer import EmbeddingShardWriter
 from .modules.failure_logger import JsonlLogger
 from .process import process_one_repo_to_embeddings   
+from .types import (
+    DEFAULT_BUILD_ID_COL,
+    DEFAULT_PARENT_COMMIT_COL,
+    SOURCE_ROW_INDEX_COL,
+)
 
 def iter_repo_groups(
     df: pd.DataFrame,
@@ -16,6 +21,10 @@ def iter_repo_groups(
             raise TypeError(f"Expected repo name to be str, got {type(repo_name).__name__}")
         yield repo_name, repo_df
 
+def add_source_row_index(df: pd.DataFrame) -> pd.DataFrame:
+    df[SOURCE_ROW_INDEX_COL] = range(len(df))
+    return df
+
 def process_travistorrent_to_codebert_embeddings(
     travistorrent_csv_path: str,
     output_dir: str = "./embedding_shards",
@@ -24,6 +33,8 @@ def process_travistorrent_to_codebert_embeddings(
     repo_col: str = DEFAULT_REPO_COL,
     commit_col: str = DEFAULT_COMMIT_COL,
     label_col: str = DEFAULT_LABEL_COL,
+    build_id_col: str | None = DEFAULT_BUILD_ID_COL,
+    parent_commit_col: str | None = DEFAULT_PARENT_COMMIT_COL,
     shard_size: int = 5000,
     raw_batch_size: int = 64,
     embed_batch_size: int = 32,
@@ -37,6 +48,7 @@ def process_travistorrent_to_codebert_embeddings(
     """
     print("Reading CSV...")
     df = pd.read_csv(travistorrent_csv_path)
+    add_source_row_index(df)
 
     required_cols = [repo_col, commit_col]
 
@@ -51,6 +63,17 @@ def process_travistorrent_to_codebert_embeddings(
             f"Warning: label_col '{label_col}' not found. "
             f"Labels will be None."
         )
+
+    for optional_name, optional_col in [
+        ("build_id_col", build_id_col),
+        ("parent_commit_col", parent_commit_col),
+    ]:
+        if optional_col is not None and optional_col not in df.columns:
+            print(
+                f"Warning: {optional_name} '{optional_col}' not found. "
+                f"Values will be None."
+            )
+
     print(f"Total samples in CSV: {len(df)}")
     print("Loading RepoManager, Embedder, and ShardWriter...")
     repo_manager = TempRepoManager(temp_repo_root=temp_repo_root)
@@ -84,6 +107,8 @@ def process_travistorrent_to_codebert_embeddings(
                 repo_col=repo_col,
                 commit_col=commit_col,
                 label_col=label_col,
+                build_id_col=build_id_col,
+                parent_commit_col=parent_commit_col,
                 embed_batch_size=embed_batch_size,
                 raw_batch_size=raw_batch_size
             )
