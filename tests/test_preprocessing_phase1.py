@@ -9,6 +9,7 @@ from context_aware_ci_build_failure_prediction.preprocessing.types import (
     SOURCE_ROW_INDEX_COL,
     RawSample,
     TextArtifact,
+    TokenizationMetadata,
     make_sample_id,
     normalize_optional_value,
 )
@@ -230,9 +231,17 @@ def test_embed_and_write_raw_batch_uses_existing_text_values():
     seen_batches = []
 
     class FakeEmbedder:
-        def embed_texts(self, texts, batch_size):
+        def embed_texts_with_metadata(self, texts, batch_size):
             seen_batches.append(list(texts))
-            return [f"embedding:{texts[0]}"]
+            metadata = [
+                TokenizationMetadata(
+                    token_count_before_truncation=len(text),
+                    retained_token_count=len(text),
+                    was_tokenizer_truncated=False,
+                )
+                for text in texts
+            ]
+            return [f"embedding:{texts[0]}"], metadata
 
     class FakeWriter:
         def __init__(self):

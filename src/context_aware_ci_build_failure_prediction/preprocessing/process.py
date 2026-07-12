@@ -96,22 +96,25 @@ def embed_and_write_raw_batch(
     diffs = [r.diff.text or "" for r in raw_buffer]
     contexts = [r.context.text or "" for r in raw_buffer]
 
-    message_embeddings = embedder.embed_texts(
+    message_embeddings, message_tokenization = embedder.embed_texts_with_metadata(
         messages,
         batch_size=embed_batch_size
     )
 
-    diff_embeddings = embedder.embed_texts(
+    diff_embeddings, diff_tokenization = embedder.embed_texts_with_metadata(
         diffs,
         batch_size=embed_batch_size
     )
 
-    context_embeddings = embedder.embed_texts(
+    context_embeddings, context_tokenization = embedder.embed_texts_with_metadata(
         contexts,
         batch_size=embed_batch_size
     )
 
     for i, raw in enumerate(raw_buffer):
+        raw.commit_message.tokenization = message_tokenization[i]
+        raw.diff.tokenization = diff_tokenization[i]
+        raw.context.tokenization = context_tokenization[i]
         writer.add({
             "repo": raw.repo,
             "commit_sha": raw.commit_sha,

@@ -13,10 +13,18 @@ DEFAULT_BUILD_ID_COL = "tr_build_id"
 DEFAULT_PARENT_COMMIT_COL = "git_prev_built_commit"
 
 
+@dataclass(frozen=True)
+class TokenizationMetadata:
+    token_count_before_truncation: int
+    retained_token_count: int
+    was_tokenizer_truncated: bool
+
+
 @dataclass
 class TextArtifact:
     text: str
     provenance: dict[str, Any]
+    tokenization: TokenizationMetadata | None = None
 
 
 @dataclass
@@ -55,7 +63,7 @@ def normalize_optional_value(value: Any) -> str | None:
 
     if isinstance(value, numbers.Real) and not isinstance(value, bool):
         if float(value).is_integer():
-            return str(int(value))
+            return str(int(float(value)))
 
     return str(value)
 
