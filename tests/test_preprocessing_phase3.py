@@ -235,5 +235,5 @@ def test_embed_and_write_raw_batch_attaches_tokenization_metadata_to_samples():
     assert samples[1].diff.tokenization == TokenizationMetadata(201, 13, False)
     assert samples[0].context.tokenization == TokenizationMetadata(300, 11, False)
     assert samples[1].context.tokenization == TokenizationMetadata(301, 16, False)
-    assert writer.records[0]["message_embedding"].tolist() == [1, 0]
-    assert writer.records[1]["context_embedding"].tolist() == [3, 1]
+    assert writer.records[0].message_embedding.tolist() == [1, 0]
+    assert writer.records[1].context_embedding.tolist() == [3, 1]

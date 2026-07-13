@@ -8,7 +8,7 @@ from tqdm import tqdm
 from collections.abc import Mapping
 
 from .modules.failure_logger import JsonlLogger
-from .modules.shard_writer import EmbeddingShardWriter
+from .modules.shard_writer import EmbeddedSampleRecord, EmbeddingShardWriter
 from .modules.repo_manager import DEFAULT_REPO_COL, DEFAULT_COMMIT_COL, DEFAULT_LABEL_COL
 from .modules.repo_manager import TempRepoManager
 from .helpers.embedding import CodeBERTEmbedder
@@ -115,14 +115,14 @@ def embed_and_write_raw_batch(
         raw.commit_message.tokenization = message_tokenization[i]
         raw.diff.tokenization = diff_tokenization[i]
         raw.context.tokenization = context_tokenization[i]
-        writer.add({
-            "repo": raw.repo,
-            "commit_sha": raw.commit_sha,
-            "message_embedding": message_embeddings[i],
-            "diff_embedding": diff_embeddings[i],
-            "context_embedding": context_embeddings[i],
-            "label": raw.label,
-        })
+        writer.add(
+            EmbeddedSampleRecord(
+                raw_sample=raw,
+                message_embedding=message_embeddings[i],
+                diff_embedding=diff_embeddings[i],
+                context_embedding=context_embeddings[i],
+            )
+        )
 
 def process_one_repo_to_embeddings(
     repo_name: str,

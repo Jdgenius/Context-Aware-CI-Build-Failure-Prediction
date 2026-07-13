@@ -260,13 +260,11 @@ def test_embed_and_write_raw_batch_uses_existing_text_values():
     )
 
     assert seen_batches == [["message text"], ["diff text"], ["context text"]]
-    assert writer.records == [
-        {
-            "repo": "owner/repo",
-            "commit_sha": "abc123",
-            "message_embedding": "embedding:message text",
-            "diff_embedding": "embedding:diff text",
-            "context_embedding": "embedding:context text",
-            "label": "passed",
-        }
-    ]
+    assert len(writer.records) == 1
+    record = writer.records[0]
+    assert record.raw_sample.repo == "owner/repo"
+    assert record.raw_sample.commit_sha == "abc123"
+    assert record.message_embedding == "embedding:message text"
+    assert record.diff_embedding == "embedding:diff text"
+    assert record.context_embedding == "embedding:context text"
+    assert record.raw_sample.label == "passed"
