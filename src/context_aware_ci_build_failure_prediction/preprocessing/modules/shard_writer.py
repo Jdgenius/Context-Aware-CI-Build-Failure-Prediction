@@ -7,7 +7,7 @@ import os
 from collections.abc import Iterator
 from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import torch
 
@@ -45,12 +45,14 @@ class EmbeddingShardWriter:
         output_dir: str = "./embedding_shards",
         shard_size: int = 5000,
         allow_overwrite: bool = False,
+        on_shard_complete: Callable[[int, Path, Path, int], None] | None = None,
     ):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         self.shard_size = shard_size
         self.allow_overwrite = allow_overwrite
+        self.on_shard_complete = on_shard_complete
         self.buffer: list[EmbeddedSampleRecord] = []
         self.shard_index = 0
 
@@ -99,12 +101,28 @@ class EmbeddingShardWriter:
             os.replace(sidecar_tmp_path, sidecar_path)
         except Exception as exc:
             if promoted_tensor and tensor_path.exists():
+                if sidecar_path.exists():
+                    sidecar_path.unlink()
                 tensor_path.unlink()
             self._cleanup_temporary_files(tensor_tmp_path, sidecar_tmp_path)
             raise RuntimeError(
                 f"Failed to write paired shard {shard_index:05d}; "
                 "buffer preserved and no completed pair was produced"
             ) from exc
+
+        if self.on_shard_complete is not None:
+            try:
+                self.on_shard_complete(
+                    shard_index,
+                    tensor_path,
+                    sidecar_path,
+                    len(records),
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Completed shard pair {shard_index:05d}, but manifest update failed; "
+                    "the completed pair was retained for recovery and the buffer was preserved"
+                ) from exc
 
         self.buffer.clear()
         self.shard_index += 1
@@ -330,7 +348,7 @@ def validate_shard_payload(
 
 
 def to_json_safe(value: Any) -> Any:
-    if is_dataclass(value):
+    if is_dataclass(value) and not isinstance(value, type):
         return to_json_safe(asdict(value))
 
     if isinstance(value, dict):
@@ -347,9 +365,10 @@ def to_json_safe(value: Any) -> Any:
             return to_json_safe(value.item())
         return to_json_safe(value.tolist())
 
-    if hasattr(value, "item") and callable(value.item):
+    item = getattr(value, "item", None)
+    if callable(item):
         try:
-            return value.item()
+            return item()
         except Exception:
             pass
 

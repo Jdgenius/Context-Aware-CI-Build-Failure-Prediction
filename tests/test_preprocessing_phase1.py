@@ -86,6 +86,8 @@ def test_missing_optional_columns_warn_once_and_do_not_fail(monkeypatch, capsys)
     main_module.process_travistorrent_to_codebert_embeddings(
         travistorrent_csv_path="unused.csv",
         max_repos=0,
+        output_dir="embedding_shards_test/phase1-main",
+        overwrite=True,
     )
 
     output = capsys.readouterr().out
@@ -122,7 +124,12 @@ def test_top_level_preserves_source_row_index_through_grouping(monkeypatch):
     monkeypatch.setattr(main_module, "JsonlLogger", lambda *args, **kwargs: object())
     monkeypatch.setattr(main_module, "process_one_repo_to_embeddings", capture_repo_df)
 
-    main_module.process_travistorrent_to_codebert_embeddings("unused.csv", max_repos=1)
+    main_module.process_travistorrent_to_codebert_embeddings(
+        "unused.csv",
+        max_repos=1,
+        output_dir="embedding_shards_test/phase1-main",
+        overwrite=True,
+    )
 
     assert captured["repo_df"][SOURCE_ROW_INDEX_COL].tolist() == [0]
 
@@ -149,7 +156,7 @@ def test_build_raw_sample_contains_identity_fields(monkeypatch):
     monkeypatch.setattr(
         process_module,
         "build_diff_artifact",
-        lambda repo_path, commit_sha, changed_files: TextArtifact(
+        lambda repo_path, commit_sha, changed_files, **kwargs: TextArtifact(
             text="diff",
             provenance={"source_type": "diff"},
         ),
@@ -157,7 +164,7 @@ def test_build_raw_sample_contains_identity_fields(monkeypatch):
     monkeypatch.setattr(
         process_module,
         "build_context_artifact",
-        lambda repo_path, commit_sha, changed_files: TextArtifact(
+        lambda repo_path, commit_sha, changed_files, **kwargs: TextArtifact(
             text="context",
             provenance={"source_type": "context"},
         ),
@@ -201,12 +208,12 @@ def test_build_raw_sample_missing_optional_columns_become_none(monkeypatch):
     monkeypatch.setattr(
         process_module,
         "build_diff_artifact",
-        lambda repo_path, commit_sha, changed_files: TextArtifact(text="", provenance={}),
+        lambda repo_path, commit_sha, changed_files, **kwargs: TextArtifact(text="", provenance={}),
     )
     monkeypatch.setattr(
         process_module,
         "build_context_artifact",
-        lambda repo_path, commit_sha, changed_files: TextArtifact(text="", provenance={}),
+        lambda repo_path, commit_sha, changed_files, **kwargs: TextArtifact(text="", provenance={}),
     )
 
     sample = process_module.build_raw_sample_from_row(row=row, repo_path=Path("."))

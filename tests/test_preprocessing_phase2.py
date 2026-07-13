@@ -316,7 +316,7 @@ def test_raw_sample_uses_artifacts_without_changing_embedder_inputs(monkeypatch)
     monkeypatch.setattr(
         process_module,
         "build_diff_artifact",
-        lambda repo_path, commit_sha, changed_files: TextArtifact(
+        lambda repo_path, commit_sha, changed_files, **kwargs: TextArtifact(
             text="diff text",
             provenance={"source_type": "diff"},
         ),
@@ -324,7 +324,7 @@ def test_raw_sample_uses_artifacts_without_changing_embedder_inputs(monkeypatch)
     monkeypatch.setattr(
         process_module,
         "build_context_artifact",
-        lambda repo_path, commit_sha, changed_files: TextArtifact(
+        lambda repo_path, commit_sha, changed_files, **kwargs: TextArtifact(
             text="context text",
             provenance={"source_type": "context"},
         ),

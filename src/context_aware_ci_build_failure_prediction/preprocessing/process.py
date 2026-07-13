@@ -2,7 +2,7 @@ import pandas as pd
 import torch
 import gc
 
-from typing import Any
+from typing import Any, Callable
 from pathlib import Path
 from tqdm import tqdm
 from collections.abc import Mapping
@@ -35,6 +35,11 @@ def build_raw_sample_from_row(
     label_col: str = DEFAULT_LABEL_COL,
     build_id_col: str | None = DEFAULT_BUILD_ID_COL,
     parent_commit_col: str | None = DEFAULT_PARENT_COMMIT_COL,
+    max_diff_chars_per_file: int = 20_000,
+    max_total_diff_chars: int = 100_000,
+    max_changed_lines_per_file: int = 20,
+    max_context_chars_per_snippet: int = 20_000,
+    max_total_context_chars: int = 150_000,
 ) -> RawSample:
     repo_name = str(row[repo_col])
     commit_sha = str(row[commit_col])
@@ -62,13 +67,18 @@ def build_raw_sample_from_row(
     diff = build_diff_artifact(
         repo_path=repo_path,
         commit_sha=commit_sha,
-        changed_files=changed_files
+        changed_files=changed_files,
+        max_diff_chars_per_file=max_diff_chars_per_file,
+        max_total_diff_chars=max_total_diff_chars,
     )
 
     context = build_context_artifact(
         repo_path=repo_path,
         commit_sha=commit_sha,
-        changed_files=changed_files
+        changed_files=changed_files,
+        max_changed_lines_per_file=max_changed_lines_per_file,
+        max_context_chars_per_snippet=max_context_chars_per_snippet,
+        max_total_context_chars=max_total_context_chars,
     )
 
     label = row.get(label_col)
@@ -136,8 +146,14 @@ def process_one_repo_to_embeddings(
     label_col: str = DEFAULT_LABEL_COL,
     build_id_col: str | None = DEFAULT_BUILD_ID_COL,
     parent_commit_col: str | None = DEFAULT_PARENT_COMMIT_COL,
+    max_diff_chars_per_file: int = 20_000,
+    max_total_diff_chars: int = 100_000,
+    max_changed_lines_per_file: int = 20,
+    max_context_chars_per_snippet: int = 20_000,
+    max_total_context_chars: int = 150_000,
     embed_batch_size: int = 32,
-    raw_batch_size: int = 64
+    raw_batch_size: int = 64,
+    on_sample_failure: Callable[[], None] | None = None,
 ) -> None:
     """
     Processes one repository:
@@ -175,6 +191,11 @@ def process_one_repo_to_embeddings(
                     label_col=label_col,
                     build_id_col=build_id_col,
                     parent_commit_col=parent_commit_col,
+                    max_diff_chars_per_file=max_diff_chars_per_file,
+                    max_total_diff_chars=max_total_diff_chars,
+                    max_changed_lines_per_file=max_changed_lines_per_file,
+                    max_context_chars_per_snippet=max_context_chars_per_snippet,
+                    max_total_context_chars=max_total_context_chars,
                 )
 
                 raw_buffer.append(raw_sample)
@@ -190,6 +211,8 @@ def process_one_repo_to_embeddings(
                     gc.collect()
 
             except Exception as e:
+                if on_sample_failure is not None:
+                    on_sample_failure()
                 failure_logger.write({
                     "stage": "sample_processing",
                     "repo": repo_name,

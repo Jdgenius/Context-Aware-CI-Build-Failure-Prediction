@@ -1,10 +1,18 @@
 import pandas as pd
 
 from collections.abc import Iterator
+from pathlib import Path
 from .helpers.embedding import CodeBERTEmbedder
 from .modules.repo_manager import DEFAULT_REPO_COL, DEFAULT_COMMIT_COL, DEFAULT_LABEL_COL, TempRepoManager
 from .modules.shard_writer import EmbeddingShardWriter
 from .modules.failure_logger import JsonlLogger
+from .modules.manifest import (
+    ManifestManager,
+    build_dataset_metadata,
+    build_preprocessing_metadata,
+    prepare_output_dir,
+    sha256_file,
+)
 from .process import process_one_repo_to_embeddings   
 from .types import (
     DEFAULT_BUILD_ID_COL,
@@ -38,7 +46,13 @@ def process_travistorrent_to_codebert_embeddings(
     shard_size: int = 5000,
     raw_batch_size: int = 64,
     embed_batch_size: int = 32,
-    max_repos: int | None = None
+    max_diff_chars_per_file: int = 20_000,
+    max_total_diff_chars: int = 100_000,
+    max_changed_lines_per_file: int = 20,
+    max_context_chars_per_snippet: int = 20_000,
+    max_total_context_chars: int = 150_000,
+    max_repos: int | None = None,
+    overwrite: bool = False,
 ) -> None:
     """
     Main entry point.
@@ -46,9 +60,21 @@ def process_travistorrent_to_codebert_embeddings(
     This assumes the CSV fits in memory. TravisTorrent metadata likely should.
     If not, you can later split by repo using chunks.
     """
+    removed_paths = prepare_output_dir(output_dir, overwrite=overwrite)
+    if removed_paths:
+        print(
+            "Removed generated preprocessing outputs: "
+            f"{[path.name for path in removed_paths]}"
+        )
+
     print("Reading CSV...")
     df = pd.read_csv(travistorrent_csv_path)
     add_source_row_index(df)
+    source_csv_sha256 = (
+        sha256_file(travistorrent_csv_path)
+        if Path(travistorrent_csv_path).exists()
+        else None
+    )
 
     required_cols = [repo_col, commit_col]
 
@@ -78,9 +104,40 @@ def process_travistorrent_to_codebert_embeddings(
     print("Loading RepoManager, Embedder, and ShardWriter...")
     repo_manager = TempRepoManager(temp_repo_root=temp_repo_root)
     embedder = CodeBERTEmbedder()
+    failed_sample_count = 0
+
+    def increment_failed_sample_count() -> None:
+        nonlocal failed_sample_count
+        failed_sample_count += 1
+
+    manifest_manager = ManifestManager(
+        output_dir=output_dir,
+        dataset=build_dataset_metadata(
+            source_csv=travistorrent_csv_path,
+            source_csv_sha256=source_csv_sha256,
+            repo_col=repo_col,
+            commit_col=commit_col,
+            label_col=label_col,
+            build_id_col=build_id_col,
+            parent_commit_col=parent_commit_col,
+        ),
+        embedding=getattr(embedder, "metadata", {}),
+        preprocessing=build_preprocessing_metadata(
+            shard_size=shard_size,
+            raw_batch_size=raw_batch_size,
+            embed_batch_size=embed_batch_size,
+            max_diff_chars_per_file=max_diff_chars_per_file,
+            max_total_diff_chars=max_total_diff_chars,
+            max_changed_lines_per_file=max_changed_lines_per_file,
+            max_context_chars_per_snippet=max_context_chars_per_snippet,
+            max_total_context_chars=max_total_context_chars,
+        ),
+        failed_sample_count=lambda: failed_sample_count,
+    )
     writer = EmbeddingShardWriter(
         output_dir=output_dir,
-        shard_size=shard_size
+        shard_size=shard_size,
+        on_shard_complete=manifest_manager.record_completed_shard,
     )
     failure_logger = JsonlLogger(failure_log_path)
 
@@ -109,9 +166,16 @@ def process_travistorrent_to_codebert_embeddings(
                 label_col=label_col,
                 build_id_col=build_id_col,
                 parent_commit_col=parent_commit_col,
+                max_diff_chars_per_file=max_diff_chars_per_file,
+                max_total_diff_chars=max_total_diff_chars,
+                max_changed_lines_per_file=max_changed_lines_per_file,
+                max_context_chars_per_snippet=max_context_chars_per_snippet,
+                max_total_context_chars=max_total_context_chars,
                 embed_batch_size=embed_batch_size,
-                raw_batch_size=raw_batch_size
+                raw_batch_size=raw_batch_size,
+                on_sample_failure=increment_failed_sample_count,
             )
 
     finally:
         writer.close()
+        manifest_manager.finalize()
