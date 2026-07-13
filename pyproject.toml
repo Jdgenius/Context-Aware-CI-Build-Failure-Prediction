@@ -23,3 +23,11 @@ build-backend = "poetry.core.masonry.api"
 dev = [
     "pytest (>=9.1.1,<10.0.0)"
 ]
+
+[tool.pytest.ini_options]
+norecursedirs = [
+    "embedding_shards",
+    "embedding_shards_test",
+    "temp_repos",
+    "temp_repos_test",
+]

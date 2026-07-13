@@ -217,6 +217,13 @@ def process_one_repo_to_embeddings(
                     "stage": "sample_processing",
                     "repo": repo_name,
                     "commit_sha": commit_sha,
+                    **build_failure_identity(
+                        row=row,
+                        repo_col=repo_col,
+                        commit_col=commit_col,
+                        build_id_col=build_id_col,
+                        parent_commit_col=parent_commit_col,
+                    ),
                     "error": str(e)
                 })
 
@@ -245,3 +252,46 @@ def process_one_repo_to_embeddings(
             torch.cuda.empty_cache()
 
         gc.collect()
+
+
+def build_failure_identity(
+    row: Mapping[str, Any],
+    repo_col: str,
+    commit_col: str,
+    build_id_col: str | None,
+    parent_commit_col: str | None,
+) -> dict[str, Any]:
+    identity: dict[str, Any] = {}
+    source_row_index_value = row.get(SOURCE_ROW_INDEX_COL)
+
+    if source_row_index_value is not None:
+        try:
+            source_row_index = int(source_row_index_value)
+        except (TypeError, ValueError):
+            source_row_index = None
+
+        identity["source_row_index"] = source_row_index
+
+    build_id = (
+        normalize_optional_value(row.get(build_id_col))
+        if build_id_col is not None
+        else None
+    )
+    parent_commit_sha = (
+        normalize_optional_value(row.get(parent_commit_col))
+        if parent_commit_col is not None
+        else None
+    )
+
+    identity["build_id"] = build_id
+    identity["parent_commit_sha"] = parent_commit_sha
+
+    if identity.get("source_row_index") is not None:
+        identity["sample_id"] = make_sample_id(
+            repo=str(row[repo_col]),
+            commit_sha=str(row[commit_col]),
+            build_id=build_id,
+            source_row_index=identity["source_row_index"],
+        )
+
+    return identity

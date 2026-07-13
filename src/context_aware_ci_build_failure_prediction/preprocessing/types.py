@@ -72,7 +72,7 @@ def make_sample_id(
     repo: str,
     commit_sha: str,
     build_id: str | None,
-    source_row_index: int,
+    source_row_index: int | Any | None,
 ) -> str:
     normalized_build_id = build_id or ""
     canonical = "\n".join(
