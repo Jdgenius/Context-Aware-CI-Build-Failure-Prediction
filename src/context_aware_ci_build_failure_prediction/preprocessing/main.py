@@ -1,4 +1,6 @@
 import pandas as pd
+import json
+import time
 
 from collections.abc import Iterator
 from pathlib import Path
@@ -53,6 +55,7 @@ def process_travistorrent_to_codebert_embeddings(
     max_total_context_chars: int = 150_000,
     max_repos: int | None = None,
     overwrite: bool = False,
+    repo_timing_log_path: str | None = None,
 ) -> None:
     """
     Main entry point.
@@ -140,6 +143,8 @@ def process_travistorrent_to_codebert_embeddings(
         on_shard_complete=manifest_manager.record_completed_shard,
     )
     failure_logger = JsonlLogger(failure_log_path)
+    if repo_timing_log_path is not None:
+        Path(repo_timing_log_path).parent.mkdir(parents=True, exist_ok=True)
 
 
     df[repo_col] = df[repo_col].astype(str)
@@ -154,6 +159,8 @@ def process_travistorrent_to_codebert_embeddings(
             print(f"\nProcessing repo: {repo_name}")
             print(f"Samples: {len(repo_df)}")
             print("Processing repoto embeddings...")
+            repo_started_at = time.monotonic()
+            failed_before_repo = failed_sample_count
             process_one_repo_to_embeddings(
                 repo_name=repo_name,
                 repo_df=repo_df,
@@ -175,7 +182,25 @@ def process_travistorrent_to_codebert_embeddings(
                 raw_batch_size=raw_batch_size,
                 on_sample_failure=increment_failed_sample_count,
             )
+            if repo_timing_log_path is not None:
+                failed_in_repo = failed_sample_count - failed_before_repo
+                attempted_samples = len(repo_df)
+                write_repo_timing_record(
+                    path=repo_timing_log_path,
+                    record={
+                        "repo": repo_name,
+                        "elapsed_seconds": time.monotonic() - repo_started_at,
+                        "attempted_samples": attempted_samples,
+                        "successful_samples": attempted_samples - failed_in_repo,
+                        "failed_samples": failed_in_repo,
+                    },
+                )
 
     finally:
         writer.close()
         manifest_manager.finalize()
+
+
+def write_repo_timing_record(path: str, record: dict) -> None:
+    with Path(path).open("a", encoding="utf-8") as file:
+        file.write(json.dumps(record, ensure_ascii=False) + "\n")

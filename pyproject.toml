@@ -14,6 +14,8 @@ dependencies = [
     "tqdm (>=4.68.3,<5.0.0)"
 ]
 
+[project.scripts]
+preprocess-travistorrent = "context_aware_ci_build_failure_prediction.preprocessing.cli:main"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
