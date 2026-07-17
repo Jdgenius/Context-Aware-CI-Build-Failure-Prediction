@@ -11,6 +11,30 @@ import pandas as pd
 SOURCE_ROW_INDEX_COL = "__source_row_index"
 DEFAULT_BUILD_ID_COL = "tr_build_id"
 DEFAULT_PARENT_COMMIT_COL = "git_prev_built_commit"
+SUCCESSFUL_BUILD_LABELS = {
+    "1",
+    "pass",
+    "passed",
+    "success",
+    "successful",
+    "succeeded",
+    "true",
+    "yes",
+    "y",
+}
+UNSUCCESSFUL_BUILD_LABELS = {
+    "0",
+    "cancelled",
+    "canceled",
+    "error",
+    "errored",
+    "fail",
+    "failed",
+    "failure",
+    "false",
+    "no",
+    "n",
+}
 
 
 @dataclass(frozen=True)
@@ -66,6 +90,33 @@ def normalize_optional_value(value: Any) -> str | None:
             return str(int(float(value)))
 
     return str(value)
+
+
+def normalize_build_label(value: Any) -> int | None:
+    if value is None:
+        return None
+
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
+
+    if isinstance(value, bool):
+        return int(value)
+
+    if isinstance(value, numbers.Real):
+        return 1 if float(value) == 1.0 else 0
+
+    normalized = str(value).strip().lower()
+    if not normalized:
+        return None
+    if normalized in SUCCESSFUL_BUILD_LABELS:
+        return 1
+    if normalized in UNSUCCESSFUL_BUILD_LABELS:
+        return 0
+
+    return 0
 
 
 def make_sample_id(

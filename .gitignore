@@ -3,4 +3,4 @@ embedding_shards_test
 final-2017-01-25.csv
 embedding_shards_smoke
 logs
-models
+checkpoints

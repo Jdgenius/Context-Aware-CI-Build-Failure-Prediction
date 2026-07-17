@@ -11,6 +11,7 @@ from context_aware_ci_build_failure_prediction.preprocessing.types import (
     TextArtifact,
     TokenizationMetadata,
     make_sample_id,
+    normalize_build_label,
     normalize_optional_value,
 )
 
@@ -46,6 +47,26 @@ def test_make_sample_id_changes_with_source_row_index():
 )
 def test_normalize_optional_value(value, expected):
     assert normalize_optional_value(value) == expected
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("passed", 1),
+        ("success", 1),
+        ("failed", 0),
+        ("errored", 0),
+        ("canceled", 0),
+        (1, 1),
+        (0, 0),
+        (True, 1),
+        (False, 0),
+        (None, None),
+        ("", None),
+    ],
+)
+def test_normalize_build_label_maps_travis_statuses_to_binary(value, expected):
+    assert normalize_build_label(value) == expected
 
 
 def test_add_source_row_index_preserves_csv_order():
@@ -179,7 +200,7 @@ def test_build_raw_sample_contains_identity_fields(monkeypatch):
     assert sample.commit_sha == "abc123"
     assert sample.parent_commit_sha == "parent456"
     assert sample.build_id == "99"
-    assert sample.label == "failed"
+    assert sample.label == 0
     assert sample.commit_message == TextArtifact(
         text="message",
         provenance={"source_type": "commit_message"},

@@ -24,6 +24,7 @@ from .types import (
     SOURCE_ROW_INDEX_COL,
     RawSample,
     make_sample_id,
+    normalize_build_label,
     normalize_optional_value,
 )
 
@@ -81,7 +82,7 @@ def build_raw_sample_from_row(
         max_total_context_chars=max_total_context_chars,
     )
 
-    label = row.get(label_col)
+    label = normalize_build_label(row.get(label_col))
 
     return RawSample(
         sample_id=sample_id,

@@ -14,6 +14,7 @@ from context_aware_ci_build_failure_prediction.preprocessing.modules.shard_write
     EmbeddingShardWriter,
     build_shard_payload,
     iter_text_sidecar,
+    labels_to_tensor,
     load_embedding_shard,
 )
 from context_aware_ci_build_failure_prediction.preprocessing.types import (
@@ -101,6 +102,13 @@ def test_successful_paired_write_schema_and_alignment():
         assert sidecar_record["text"]["context"] == records[index].raw_sample.context.text
         assert sidecar_record["provenance"]["diff"]["extraction"]["source_type"] == "diff"
         assert sidecar_record["provenance"]["diff"]["tokenization"]["retained_token_count"]
+
+
+def test_labels_to_tensor_maps_status_strings_to_binary_values():
+    labels = labels_to_tensor(["passed", "failed", "errored", "canceled", 1, 0, None])
+
+    assert torch.equal(labels[:6], torch.tensor([1.0, 0.0, 0.0, 0.0, 1.0, 0.0]))
+    assert torch.isnan(labels[6])
 
 
 def test_automatic_shard_boundaries_preserve_global_order():

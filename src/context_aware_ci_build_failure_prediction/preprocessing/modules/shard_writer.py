@@ -11,7 +11,7 @@ from typing import Any, Callable
 
 import torch
 
-from ..types import RawSample
+from ..types import RawSample, normalize_build_label
 
 
 FORMAT_VERSION = 1
@@ -260,17 +260,11 @@ def labels_to_tensor(labels: list[Any]) -> torch.Tensor:
     values = []
 
     for label in labels:
-        if label is None:
+        normalized_label = normalize_build_label(label)
+        if normalized_label is None:
             values.append(float("nan"))
-        elif isinstance(label, bool):
-            values.append(float(int(label)))
-        elif isinstance(label, (int, float)):
-            values.append(float(label))
         else:
-            try:
-                values.append(float(label))
-            except (TypeError, ValueError):
-                values.append(float("nan"))
+            values.append(float(normalized_label))
 
     return torch.tensor(values, dtype=torch.float32)
 
