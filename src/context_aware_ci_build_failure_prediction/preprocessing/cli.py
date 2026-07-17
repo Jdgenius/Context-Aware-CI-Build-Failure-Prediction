@@ -77,6 +77,7 @@ def add_preprocessing_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--max-total-context-chars", type=int, default=150_000)
     parser.add_argument("--max-repos", type=int, default=None)
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--resume", action="store_true")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -124,12 +125,15 @@ def run_command(args: argparse.Namespace) -> int:
     start = time.monotonic()
     status = "failed"
     exception_info = None
+    process_result: dict[str, Any] | None = None
 
     try:
         install_signal_handlers()
+        if args.resume and args.overwrite:
+            raise ValueError("--resume and --overwrite are mutually exclusive")
         validate_input_csv(args.travistorrent_csv_path)
         ensure_parent_dirs(args)
-        process_travistorrent_to_codebert_embeddings(
+        process_result = process_travistorrent_to_codebert_embeddings(
             travistorrent_csv_path=args.travistorrent_csv_path,
             output_dir=args.output_dir,
             temp_repo_root=args.temp_repo_root,
@@ -149,6 +153,7 @@ def run_command(args: argparse.Namespace) -> int:
             max_total_context_chars=args.max_total_context_chars,
             max_repos=args.max_repos,
             overwrite=args.overwrite,
+            resume=args.resume,
             repo_timing_log_path=args.repo_timing_log_path,
         )
         status = "succeeded"
@@ -172,6 +177,7 @@ def run_command(args: argparse.Namespace) -> int:
                 finished_at=finished_at,
                 elapsed_seconds=time.monotonic() - start,
                 exception_info=exception_info,
+                process_result=process_result,
             )
             write_manifest_atomic(args.run_summary_path, summary)
 
@@ -261,6 +267,7 @@ def build_run_summary(
     finished_at: datetime,
     elapsed_seconds: float,
     exception_info: dict[str, str] | None,
+    process_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     manifest_path = Path(args.output_dir) / "manifest.json"
     results = {
@@ -296,6 +303,8 @@ def build_run_summary(
         },
         "results": results,
     }
+    if process_result and "resume" in process_result:
+        summary["resume"] = process_result["resume"]
     if exception_info is not None:
         summary["exception"] = exception_info
     return summary

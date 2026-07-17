@@ -31,22 +31,28 @@ class ManifestManager:
         embedding: dict[str, Any],
         preprocessing: dict[str, Any],
         failed_sample_count: Callable[[], int] | None = None,
+        existing_manifest: dict[str, Any] | None = None,
     ):
         self.output_dir = Path(output_dir)
         self.manifest_path = self.output_dir / "manifest.json"
         self.failed_sample_count = failed_sample_count or (lambda: 0)
-        self.manifest: dict[str, Any] = {
-            "format_version": FORMAT_VERSION,
-            "dataset": dataset,
-            "embedding": embedding,
-            "preprocessing": preprocessing,
-            "shards": [],
-            "totals": {
-                "successful_samples": 0,
-                "failed_samples": self.failed_sample_count(),
-                "num_shards": 0,
-            },
-        }
+        if existing_manifest is None:
+            self.manifest: dict[str, Any] = {
+                "format_version": FORMAT_VERSION,
+                "dataset": dataset,
+                "embedding": embedding,
+                "preprocessing": preprocessing,
+                "shards": [],
+                "totals": {
+                    "successful_samples": 0,
+                    "failed_samples": self.failed_sample_count(),
+                    "num_shards": 0,
+                },
+                "runs": [],
+            }
+        else:
+            self.manifest = deepcopy(existing_manifest)
+            self.manifest.setdefault("runs", [])
 
     def record_completed_shard(
         self,
@@ -80,6 +86,13 @@ class ManifestManager:
 
     def finalize(self) -> None:
         next_manifest = deepcopy(self.manifest)
+        update_totals(next_manifest, self.failed_sample_count())
+        write_manifest_atomic(self.manifest_path, next_manifest)
+        self.manifest = next_manifest
+
+    def record_run(self, run: dict[str, Any]) -> None:
+        next_manifest = deepcopy(self.manifest)
+        next_manifest.setdefault("runs", []).append(run)
         update_totals(next_manifest, self.failed_sample_count())
         write_manifest_atomic(self.manifest_path, next_manifest)
         self.manifest = next_manifest

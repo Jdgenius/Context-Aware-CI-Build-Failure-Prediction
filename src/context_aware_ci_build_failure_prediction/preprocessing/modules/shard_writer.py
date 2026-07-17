@@ -45,6 +45,8 @@ class EmbeddingShardWriter:
         output_dir: str = "./embedding_shards",
         shard_size: int = 5000,
         allow_overwrite: bool = False,
+        initial_shard_index: int = 0,
+        existing_sample_ids: set[str] | None = None,
         on_shard_complete: Callable[[int, Path, Path, int], None] | None = None,
     ):
         self.output_dir = Path(output_dir)
@@ -54,7 +56,8 @@ class EmbeddingShardWriter:
         self.allow_overwrite = allow_overwrite
         self.on_shard_complete = on_shard_complete
         self.buffer: list[EmbeddedSampleRecord] = []
-        self.shard_index = 0
+        self.shard_index = initial_shard_index
+        self._committed_sample_ids = set(existing_sample_ids or set())
 
     def add(self, record: EmbeddedSampleRecord) -> None:
         if not isinstance(record, EmbeddedSampleRecord):
@@ -62,6 +65,8 @@ class EmbeddingShardWriter:
                 "EmbeddingShardWriter.add expected EmbeddedSampleRecord, "
                 f"got {type(record).__name__}"
             )
+        if record.raw_sample.sample_id in self._committed_sample_ids:
+            raise ValueError(f"Duplicate sample_id already exists: {record.raw_sample.sample_id}")
 
         self.buffer.append(record)
 
@@ -124,6 +129,7 @@ class EmbeddingShardWriter:
                     "the completed pair was retained for recovery and the buffer was preserved"
                 ) from exc
 
+        self._committed_sample_ids.update(record.raw_sample.sample_id for record in records)
         self.buffer.clear()
         self.shard_index += 1
         print(f"Saved shard pair: {tensor_path} and {sidecar_path} with {len(records)} samples")

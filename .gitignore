@@ -2,3 +2,5 @@ embedding_shards_test
 *__pycache__/
 final-2017-01-25.csv
 embedding_shards_smoke
+logs
+models

@@ -177,7 +177,27 @@ repo_timing.jsonl
 
 `Ctrl+C` or a normal termination signal should stop with a non-success status and attempt to write a run summary. Completed shard pairs remain protected by atomic write logic.
 
-Full automatic resume is not implemented. For long runs, reliability still requires either deterministic partitioning into independent jobs or a later resume implementation.
+Completed shard pairs listed in `manifest.json` are checkpoints. To continue an interrupted run in the same output directory, run the same command with `--resume` and a new run-summary path:
+
+```bash
+poetry run python -m context_aware_ci_build_failure_prediction.preprocessing.cli run \
+  --travistorrent-csv-path /data/input/final-2017-01-25.csv \
+  --output-dir /data/output/embedding_shards \
+  --temp-repo-root /scratch/temp_repos \
+  --failure-log-path /data/output/logs/failures.jsonl \
+  --run-summary-path /data/output/logs/run_summary_resume_02.json \
+  --repo-timing-log-path /data/output/logs/repo_timing_resume_02.jsonl \
+  --shard-size 5000 \
+  --raw-batch-size 64 \
+  --embed-batch-size 32 \
+  --resume
+```
+
+Resume is explicit by design. A normal fresh run still refuses existing generated outputs, and `--resume` cannot be combined with `--overwrite`. This prevents accidental continuation with different settings or accidental deletion of a run you meant to preserve.
+
+Before resuming, back up the output directory or snapshot the volume. Resume validates the existing manifest, completed shard pairs, checksums, sample IDs, model metadata, column names, source CSV checksum, shard size, and preprocessing limits. Temporary files and unpaired incomplete files can be cleaned during explicit resume, but unlisted completed-looking shard pairs are refused for manual inspection.
+
+Samples in a completed shard are skipped on resume. Samples that were only in memory when the process stopped are processed again because they were never checkpointed. Smaller shard sizes checkpoint more often and repeat less work after interruption, but they create more files.
 
 ## 14. Persistence Warning
 
