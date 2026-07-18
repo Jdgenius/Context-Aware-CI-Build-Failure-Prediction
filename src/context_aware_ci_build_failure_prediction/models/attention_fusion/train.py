@@ -116,6 +116,11 @@ def train_attention_fusion(
         if len(validation_dataset) > 0
         else None
     )
+    test_loader = (
+        DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+        if len(test_dataset) > 0
+        else None
+    )
 
     model = AttentionFusionClassifier(
         embedding_dim=embedding_dim,
@@ -176,35 +181,35 @@ def train_attention_fusion(
             time.perf_counter() - epoch_started_at,
         )
 
-    final_validation_metrics = None
+    final_test_metrics = None
     confusion_matrix = None
     resolved_confusion_matrix_path = None
-    if validation_loader is not None:
-        LOGGER.info("Evaluating final validation confusion matrix")
+    if test_loader is not None:
+        LOGGER.info("Evaluating final test confusion matrix")
         (
-            final_validation_metrics,
-            validation_labels,
-            validation_predictions,
+            final_test_metrics,
+            test_labels,
+            test_predictions,
         ) = evaluate_attention_fusion_with_predictions(
             model=model,
-            loader=validation_loader,
+            loader=test_loader,
             criterion=criterion,
             device=resolved_device,
         )
         confusion_matrix = build_binary_confusion_matrix(
-            labels=validation_labels,
-            predictions=validation_predictions,
+            labels=test_labels,
+            predictions=test_predictions,
         )
-        print("\nAttention fusion validation confusion matrix:")
+        print("\nAttention fusion test confusion matrix:")
         print(format_confusion_matrix(confusion_matrix))
         resolved_confusion_matrix_path = plot_confusion_matrix(
             confusion_matrix=confusion_matrix,
-            title="Attention Fusion Validation Confusion Matrix",
+            title="Attention Fusion Test Confusion Matrix",
             confusion_matrix_path=confusion_matrix_path,
             show=show_confusion_matrix,
         )
     else:
-        LOGGER.info("Skipping confusion matrix because validation split is empty")
+        LOGGER.info("Skipping confusion matrix because test split is empty")
 
     checkpoint = {
         "model_state_dict": model.state_dict(),
@@ -229,7 +234,7 @@ def train_attention_fusion(
             "shard_glob": shard_glob,
         },
         "history": history,
-        "final_validation_metrics": final_validation_metrics,
+        "final_test_metrics": final_test_metrics,
         "confusion_matrix": confusion_matrix,
     }
 
@@ -268,7 +273,7 @@ def train_attention_fusion(
             if resolved_confusion_matrix_path is not None
             else None
         ),
-        "final_validation_metrics": final_validation_metrics,
+        "final_test_metrics": final_test_metrics,
         "confusion_matrix": confusion_matrix,
         "history": history,
     }

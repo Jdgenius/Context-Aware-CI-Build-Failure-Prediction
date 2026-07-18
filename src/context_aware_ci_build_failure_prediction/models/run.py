@@ -6,6 +6,7 @@ from collections.abc import Callable
 
 from context_aware_ci_build_failure_prediction.models.baseline import fit as baseline_fit
 from context_aware_ci_build_failure_prediction.models.baseline import inference as baseline_inference
+from context_aware_ci_build_failure_prediction.models.baseline import sample_sweep as baseline_sample_sweep
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -13,6 +14,7 @@ def main(argv: list[str] | None = None) -> int:
     commands: dict[str, Callable[[list[str] | None], int]] = {
         "baseline-train": baseline_fit.main,
         "baseline-infer": baseline_inference.main,
+        "baseline-sample-sweep": baseline_sample_sweep.main,
     }
     parser = argparse.ArgumentParser(description="Model command runner.")
     parser.add_argument(
