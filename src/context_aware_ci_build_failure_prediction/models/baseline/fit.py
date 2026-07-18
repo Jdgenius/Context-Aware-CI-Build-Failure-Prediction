@@ -5,7 +5,7 @@ import json
 import logging
 import pickle
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pandas as pd
 import torch
@@ -16,7 +16,7 @@ from context_aware_ci_build_failure_prediction.models.baseline.baseline import (
 )
 from context_aware_ci_build_failure_prediction.models.load_samples import (
     LoadedSampleTable,
-    load_sample_table,
+    load_sample_splits,
 )
 
 
@@ -29,44 +29,63 @@ def train_random_forest_baseline(
     *,
     num_samples: int | None = 300,
     validation_fraction: float = 0.2,
-    seed: int = 42,
+    test_fraction: float = 0.2,
+    seed: int = 0,
+    shuffle_splits: bool = True,
     shard_glob: str = "shard_*.pt",
     n_estimators: int = 300,
     max_depth: int | None = None,
-    class_weight: str | None = "balanced",
+    class_weight: Literal["balanced", "balanced_subsample"] | dict[Any, float] | None = "balanced",
     n_jobs: int = 1,
     table_path: str | Path | None = None,
     bar_graph_path: str | Path | None = None,
     show_bar_graph: bool = True,
 ) -> dict[str, Any]:
-    if not 0.0 <= validation_fraction < 1.0:
-        raise ValueError("validation_fraction must be in [0, 1).")
-
     LOGGER.info("Loading samples from %s", source_dir)
-    samples = load_sample_table(
+    splits = load_sample_splits(
         source_dir=source_dir,
         num_samples=num_samples,
+        validation_fraction=validation_fraction,
+        test_fraction=test_fraction,
+        seed=seed,
+        shuffle=shuffle_splits,
         shard_glob=shard_glob,
     )
-    sample_count = int(samples.labels.shape[0])
+    sample_count = (
+        int(splits.train.labels.shape[0])
+        + int(splits.validation.labels.shape[0])
+        + int(splits.test.labels.shape[0])
+    )
     if sample_count == 0:
         raise ValueError("No samples were loaded.")
+    if splits.train.labels.shape[0] == 0:
+        raise ValueError("No samples were assigned to the train split.")
+    if splits.test.labels.shape[0] == 0:
+        raise ValueError(
+            "No samples were assigned to the test split. "
+            "Use more repositories or lower --validation-fraction/--test-fraction."
+        )
 
-    train_indices, test_indices = make_attention_fusion_style_split(
-        sample_count=sample_count,
-        validation_fraction=validation_fraction,
-        seed=seed,
-    )
     LOGGER.info(
-        "Loaded %s samples; train_samples=%s test_samples=%s feature_dim=%s",
+        "Loaded %s samples; train_samples=%s validation_samples=%s "
+        "test_samples=%s feature_dim=%s",
         sample_count,
-        len(train_indices),
-        len(test_indices),
-        samples.features.shape[1],
+        splits.train.labels.shape[0],
+        splits.validation.labels.shape[0],
+        splits.test.labels.shape[0],
+        splits.train.features.shape[1],
     )
 
-    features = samples.features.numpy()
-    labels = samples.labels.to(torch.int64).numpy()
+    train_features = splits.train.features.numpy()
+    train_labels = splits.train.labels.to(torch.int64).numpy()
+    validation_features = splits.validation.features.numpy()
+    validation_labels = splits.validation.labels.to(torch.int64).numpy()
+    test_features = splits.test.features.numpy()
+    test_labels = splits.test.labels.to(torch.int64).numpy()
+    
+    #Remove later
+    test_features = test_features[:10]
+    test_labels = test_labels[:10]
 
     model = create_random_forest_classifier(
         n_estimators=n_estimators,
@@ -81,11 +100,19 @@ def train_random_forest_baseline(
         max_depth,
         class_weight,
     )
-    model.fit(features[train_indices], labels[train_indices])
+    model.fit(train_features, train_labels)
 
-    test_predictions = model.predict(features[test_indices]).astype(int).tolist()
-    test_labels = labels[test_indices].astype(int).tolist()
-    metrics = binary_classification_metrics(test_labels, test_predictions)
+    validation_metrics = None
+    if len(validation_labels) > 0:
+        validation_predictions = model.predict(validation_features).astype(int).tolist()
+        validation_metrics = binary_classification_metrics(
+            validation_labels.astype(int).tolist(),
+            validation_predictions,
+        )
+
+    test_predictions = model.predict(test_features).astype(int).tolist()
+    test_labels_list = test_labels.astype(int).tolist()
+    metrics = binary_classification_metrics(test_labels_list, test_predictions)
     LOGGER.info(
         "Test metrics: accuracy=%.4f precision=%.4f recall=%.4f f1=%.4f",
         metrics["accuracy"],
@@ -95,8 +122,7 @@ def train_random_forest_baseline(
     )
 
     table = build_test_result_table(
-        samples=samples,
-        test_indices=test_indices,
+        samples=splits.test,
         predictions=test_predictions,
     )
     print("\nRandom forest test-set commit results:")
@@ -123,14 +149,17 @@ def train_random_forest_baseline(
             "source_dir": str(source_dir),
             "num_samples": num_samples,
             "validation_fraction": validation_fraction,
+            "test_fraction": test_fraction,
             "seed": seed,
+            "shuffle_splits": shuffle_splits,
             "shard_glob": shard_glob,
             "n_estimators": n_estimators,
             "max_depth": max_depth,
             "class_weight": class_weight,
             "n_jobs": n_jobs,
         },
-        "feature_dim": int(samples.features.shape[1]),
+        "validation_metrics": validation_metrics,
+        "feature_dim": int(splits.train.features.shape[1]),
     }
     with model_path.open("wb") as file:
         pickle.dump(checkpoint, file)
@@ -139,8 +168,13 @@ def train_random_forest_baseline(
     return {
         "model_path": str(model_path),
         "num_samples": sample_count,
-        "train_samples": len(train_indices),
-        "test_samples": len(test_indices),
+        "train_samples": int(splits.train.labels.shape[0]),
+        "validation_samples": int(splits.validation.labels.shape[0]),
+        "test_samples": int(splits.test.labels.shape[0]),
+        "train_repos": splits.train_repos,
+        "validation_repos": splits.validation_repos,
+        "test_repos": splits.test_repos,
+        "validation_metrics": validation_metrics,
         "metrics": metrics,
         "table_path": str(table_path) if table_path is not None else None,
         "bar_graph_path": (
@@ -151,32 +185,13 @@ def train_random_forest_baseline(
     }
 
 
-def make_attention_fusion_style_split(
-    *,
-    sample_count: int,
-    validation_fraction: float,
-    seed: int,
-) -> tuple[list[int], list[int]]:
-    validation_size = int(round(sample_count * validation_fraction))
-    if sample_count > 1:
-        validation_size = min(max(validation_size, 1), sample_count - 1)
-    else:
-        validation_size = 0
-
-    train_size = sample_count - validation_size
-    generator = torch.Generator().manual_seed(seed)
-    indices = torch.randperm(sample_count, generator=generator).tolist()
-    return indices[:train_size], indices[train_size:]
-
-
 def build_test_result_table(
     *,
     samples: LoadedSampleTable,
-    test_indices: list[int],
     predictions: list[int],
 ) -> pd.DataFrame:
     rows = []
-    for index, prediction in zip(test_indices, predictions, strict=True):
+    for index, prediction in zip(range(len(predictions)), predictions, strict=True):
         label = int(samples.labels[index].item())
         rows.append(
             {
@@ -250,7 +265,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model-path", required=True)
     parser.add_argument("--num-samples", type=int, default=300)
     parser.add_argument("--validation-fraction", type=float, default=0.2)
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--test-fraction", type=float, default=0.2)
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--no-shuffle-splits", action="store_true")
     parser.add_argument("--shard-glob", default="shard_*.pt")
     parser.add_argument("--n-estimators", type=int, default=300)
     parser.add_argument("--max-depth", type=int)
@@ -273,7 +290,9 @@ def main(argv: list[str] | None = None) -> int:
         model_path=args.model_path,
         num_samples=args.num_samples,
         validation_fraction=args.validation_fraction,
+        test_fraction=args.test_fraction,
         seed=args.seed,
+        shuffle_splits=not args.no_shuffle_splits,
         shard_glob=args.shard_glob,
         n_estimators=args.n_estimators,
         max_depth=args.max_depth,

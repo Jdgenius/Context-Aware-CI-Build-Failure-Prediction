@@ -1,29 +1,18 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
-
-def require_random_forest_classifier():
-    try:
-        from sklearn.ensemble import RandomForestClassifier
-    except ImportError as exc:
-        raise ImportError(
-            "scikit-learn is required for the random forest baseline. "
-            "Install it with `poetry add scikit-learn` and rerun the command."
-        ) from exc
-
-    return RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier
 
 
 def create_random_forest_classifier(
     *,
     n_estimators: int = 300,
     max_depth: int | None = None,
-    random_state: int = 42,
-    class_weight: str | dict[Any, float] | None = "balanced",
+    random_state: int = 0,
+    class_weight: Literal["balanced", "balanced_subsample"] | dict[Any, float] | None = "balanced",
     n_jobs: int = 1,
 ):
-    RandomForestClassifier = require_random_forest_classifier()
     return RandomForestClassifier(
         n_estimators=n_estimators,
         max_depth=max_depth,
@@ -87,5 +76,4 @@ def binary_classification_metrics(
 __all__ = [
     "binary_classification_metrics",
     "create_random_forest_classifier",
-    "require_random_forest_classifier",
 ]

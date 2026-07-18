@@ -82,10 +82,11 @@ def process_travistorrent_to_codebert_embeddings(
     max_changed_lines_per_file: int = 20,
     max_context_chars_per_snippet: int = 20_000,
     max_total_context_chars: int = 150_000,
-    max_repos: int | None = None,
+    max_repos: int | None = 10,
     overwrite: bool = False,
     resume: bool = False,
     repo_timing_log_path: str | None = None,
+    device: str | None = None,
 ) -> dict:
     """
     Main entry point.
@@ -142,7 +143,7 @@ def process_travistorrent_to_codebert_embeddings(
     print(f"Total samples in CSV: {len(df)}")
     print("Loading RepoManager, Embedder, and ShardWriter...")
     repo_manager = TempRepoManager(temp_repo_root=temp_repo_root)
-    embedder = CodeBERTEmbedder()
+    embedder = CodeBERTEmbedder(device=device)
     failed_sample_count = 0
 
     def increment_failed_sample_count() -> None:

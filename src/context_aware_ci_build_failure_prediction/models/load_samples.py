@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from collections import OrderedDict
 
 import torch
 from torch.utils.data import TensorDataset
@@ -40,6 +41,33 @@ class LoadedSampleTable:
             self.context_embeddings,
             self.labels,
         )
+
+    def subset(self, indices: list[int]) -> LoadedSampleTable:
+        index_tensor = torch.tensor(indices, dtype=torch.long)
+        return LoadedSampleTable(
+            message_embeddings=self.message_embeddings[index_tensor],
+            diff_embeddings=self.diff_embeddings[index_tensor],
+            context_embeddings=self.context_embeddings[index_tensor],
+            labels=self.labels[index_tensor],
+            repos=[self.repos[index] for index in indices],
+            commit_shas=[self.commit_shas[index] for index in indices],
+            sample_ids=[self.sample_ids[index] for index in indices],
+            build_ids=[self.build_ids[index] for index in indices],
+        )
+
+
+@dataclass(frozen=True)
+class LoadedSampleSplits:
+    train: LoadedSampleTable
+    validation: LoadedSampleTable
+    test: LoadedSampleTable
+    train_repos: list[str]
+    validation_repos: list[str]
+    test_repos: list[str]
+
+    @property
+    def embedding_dim(self) -> int:
+        return int(self.train.message_embeddings.shape[1])
 
 
 def load_training_pairs_from_pt_shards(
@@ -201,6 +229,32 @@ def load_training_pairs(
     )
 
 
+def load_sample_splits(
+    source_dir: str | Path,
+    num_samples: int | None = 300,
+    *,
+    validation_fraction: float = 0.2,
+    test_fraction: float = 0.2,
+    seed: int = 0,
+    shuffle: bool = True,
+    shard_glob: str = "shard_*.pt",
+    dtype: torch.dtype = torch.float32,
+) -> LoadedSampleSplits:
+    table = load_sample_table(
+        source_dir=source_dir,
+        num_samples=num_samples,
+        shard_glob=shard_glob,
+        dtype=dtype,
+    )
+    return split_sample_table_by_repo(
+        table=table,
+        validation_fraction=validation_fraction,
+        test_fraction=test_fraction,
+        seed=seed,
+        shuffle=shuffle,
+    )
+
+
 def load_sample_table(
     source_dir: str | Path,
     num_samples: int | None = 300,
@@ -214,6 +268,93 @@ def load_sample_table(
         shard_glob=shard_glob,
         dtype=dtype,
     )
+
+
+def split_sample_table_by_repo(
+    *,
+    table: LoadedSampleTable,
+    validation_fraction: float = 0.2,
+    test_fraction: float = 0.2,
+    seed: int = 0,
+    shuffle: bool = True,
+) -> LoadedSampleSplits:
+    if not 0.0 <= validation_fraction < 1.0:
+        raise ValueError("validation_fraction must be in [0, 1).")
+    if not 0.0 <= test_fraction < 1.0:
+        raise ValueError("test_fraction must be in [0, 1).")
+    if validation_fraction + test_fraction >= 1.0:
+        raise ValueError("validation_fraction + test_fraction must be less than 1.")
+
+    repo_to_indices: OrderedDict[str, list[int]] = OrderedDict()
+    for index, repo in enumerate(table.repos):
+        repo_to_indices.setdefault(repo, []).append(index)
+
+    repos = list(repo_to_indices)
+    if shuffle and repos:
+        generator = torch.Generator().manual_seed(seed)
+        permutation = torch.randperm(len(repos), generator=generator).tolist()
+        repos = [repos[index] for index in permutation]
+
+    train_repos, validation_repos, test_repos = _split_repos(
+        repos=repos,
+        validation_fraction=validation_fraction,
+        test_fraction=test_fraction,
+    )
+
+    train_indices = _indices_for_repos(train_repos, repo_to_indices)
+    validation_indices = _indices_for_repos(validation_repos, repo_to_indices)
+    test_indices = _indices_for_repos(test_repos, repo_to_indices)
+
+    return LoadedSampleSplits(
+        train=table.subset(train_indices),
+        validation=table.subset(validation_indices),
+        test=table.subset(test_indices),
+        train_repos=train_repos,
+        validation_repos=validation_repos,
+        test_repos=test_repos,
+    )
+
+
+def _split_repos(
+    *,
+    repos: list[str],
+    validation_fraction: float,
+    test_fraction: float,
+) -> tuple[list[str], list[str], list[str]]:
+    repo_count = len(repos)
+    validation_count = int(round(repo_count * validation_fraction))
+    test_count = int(round(repo_count * test_fraction))
+
+    if repo_count >= 3:
+        if validation_fraction > 0 and validation_count == 0:
+            validation_count = 1
+        if test_fraction > 0 and test_count == 0:
+            test_count = 1
+
+    while validation_count + test_count > max(repo_count - 1, 0):
+        if test_count >= validation_count and test_count > 0:
+            test_count -= 1
+        elif validation_count > 0:
+            validation_count -= 1
+        else:
+            break
+
+    train_count = repo_count - validation_count - test_count
+    train_repos = repos[:train_count]
+    validation_repos = repos[train_count:train_count + validation_count]
+    test_repos = repos[train_count + validation_count:]
+    return train_repos, validation_repos, test_repos
+
+
+def _indices_for_repos(
+    repos: list[str],
+    repo_to_indices: OrderedDict[str, list[int]],
+) -> list[int]:
+    return [
+        index
+        for repo in repos
+        for index in repo_to_indices[repo]
+    ]
 
 
 def _payload_tensor(
@@ -334,8 +475,11 @@ def _validate_embedding_dimensions(
 
 __all__ = [
     "LoadedSampleTable",
+    "LoadedSampleSplits",
     "load_sample_table",
     "load_sample_table_from_pt_shards",
+    "load_sample_splits",
     "load_training_pairs",
     "load_training_pairs_from_pt_shards",
+    "split_sample_table_by_repo",
 ]

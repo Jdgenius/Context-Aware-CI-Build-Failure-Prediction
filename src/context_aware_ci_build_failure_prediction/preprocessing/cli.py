@@ -44,6 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     env_parser = subparsers.add_parser("environment-check", help="Report environment readiness")
     add_common_paths(env_parser)
+    add_device_arg(env_parser)
     env_parser.add_argument("--require-cuda", action="store_true")
     env_parser.add_argument("--json", action="store_true", help="Emit JSON only")
 
@@ -78,6 +79,15 @@ def add_preprocessing_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--max-repos", type=int, default=None)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--resume", action="store_true")
+    add_device_arg(parser)
+
+
+def add_device_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--device",
+        default=None,
+        help="Embedding device override, e.g. cpu, cuda, or cuda:0. Defaults to auto.",
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -96,6 +106,7 @@ def environment_check_command(args: argparse.Namespace) -> int:
         travistorrent_csv_path=args.travistorrent_csv_path,
         output_dir=args.output_dir,
         temp_repo_root=args.temp_repo_root,
+        device=args.device,
     )
     failures = []
 
@@ -155,6 +166,7 @@ def run_command(args: argparse.Namespace) -> int:
             overwrite=args.overwrite,
             resume=args.resume,
             repo_timing_log_path=args.repo_timing_log_path,
+            device=args.device,
         )
         status = "succeeded"
         return 0
@@ -204,6 +216,7 @@ def collect_environment_report(
     travistorrent_csv_path: str | None,
     output_dir: str | Path,
     temp_repo_root: str | Path,
+    device: str | None = None,
 ) -> dict[str, Any]:
     cuda_available = torch.cuda.is_available()
     gpu_count = torch.cuda.device_count() if cuda_available else 0
@@ -242,7 +255,7 @@ def collect_environment_report(
             "gpu_count": gpu_count,
             "gpu_names": [torch.cuda.get_device_name(i) for i in range(gpu_count)],
         },
-        "selected_preprocessing_device": "cuda" if cuda_available else "cpu",
+        "selected_preprocessing_device": device or ("cuda" if cuda_available else "cpu"),
         "disk": {
             "output_dir": disk_report(output_dir),
             "temp_repo_root": disk_report(temp_repo_root),
@@ -300,6 +313,7 @@ def build_run_summary(
             "shard_size": args.shard_size,
             "raw_batch_size": args.raw_batch_size,
             "embed_batch_size": args.embed_batch_size,
+            "device": args.device,
         },
         "results": results,
     }

@@ -10,13 +10,13 @@ from typing import Any
 
 import torch
 from torch import nn
-from torch.utils.data import DataLoader, Dataset, TensorDataset, random_split
+from torch.utils.data import DataLoader
 
 from context_aware_ci_build_failure_prediction.models.attention_fusion.model import (
     AttentionFusionClassifier,
 )
 from context_aware_ci_build_failure_prediction.models.load_samples import (
-    load_training_pairs,
+    load_sample_splits,
 )
 
 
@@ -32,7 +32,9 @@ def train_attention_fusion(
     epochs: int = 10,
     learning_rate: float = 1e-3,
     validation_fraction: float = 0.2,
+    test_fraction: float = 0.2,
     seed: int = 0,
+    shuffle_splits: bool = True,
     model_dim: int = 128,
     attention_dim: int = 64,
     classifier_hidden_dim: int = 128,
@@ -48,20 +50,20 @@ def train_attention_fusion(
         raise ValueError("epochs must be positive.")
     if batch_size <= 0:
         raise ValueError("batch_size must be positive.")
-    if not 0.0 <= validation_fraction < 1.0:
-        raise ValueError("validation_fraction must be in [0, 1).")
-
     LOGGER.info("Starting attention-fusion training")
     LOGGER.info(
         "Training configuration: source_dir=%s num_samples=%s batch_size=%s "
-        "epochs=%s learning_rate=%s validation_fraction=%s seed=%s",
+        "epochs=%s learning_rate=%s validation_fraction=%s test_fraction=%s "
+        "seed=%s shuffle_splits=%s",
         source_dir,
         num_samples,
         batch_size,
         epochs,
         learning_rate,
         validation_fraction,
+        test_fraction,
         seed,
+        shuffle_splits,
     )
 
     _set_seed(seed)
@@ -69,37 +71,47 @@ def train_attention_fusion(
     LOGGER.info("Using device: %s", resolved_device)
 
     LOGGER.info("Loading samples from .pt shard files")
-    dataset = load_training_pairs(
+    splits = load_sample_splits(
         source_dir=source_dir,
         num_samples=num_samples,
+        validation_fraction=validation_fraction,
+        test_fraction=test_fraction,
+        seed=seed,
+        shuffle=shuffle_splits,
         shard_glob=shard_glob,
     )
-    sample_count = len(dataset)
+    train_dataset = splits.train.to_tensor_dataset()
+    validation_dataset = splits.validation.to_tensor_dataset()
+    test_dataset = splits.test.to_tensor_dataset()
+    sample_count = len(train_dataset) + len(validation_dataset) + len(test_dataset)
     if sample_count == 0:
         raise ValueError("No training samples were loaded.")
+    if len(train_dataset) == 0:
+        raise ValueError("No training samples were assigned to the train split.")
 
-    embedding_dim = int(dataset.tensors[0].shape[1])
+    embedding_dim = splits.embedding_dim
     LOGGER.info(
         "Loaded %s samples with embedding_dim=%s",
         sample_count,
         embedding_dim,
     )
-    (
-        train_dataset,
-        validation_dataset,
-        train_sample_count,
-        validation_sample_count,
-    ) = _split_dataset(dataset, sample_count, validation_fraction, seed)
     LOGGER.info(
-        "Dataset split: train_samples=%s validation_samples=%s",
-        train_sample_count,
-        validation_sample_count,
+        "Repo split: train_repos=%s validation_repos=%s test_repos=%s",
+        len(splits.train_repos),
+        len(splits.validation_repos),
+        len(splits.test_repos),
+    )
+    LOGGER.info(
+        "Dataset split: train_samples=%s validation_samples=%s test_samples=%s",
+        len(train_dataset),
+        len(validation_dataset),
+        len(test_dataset),
     )
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     validation_loader = (
         DataLoader(validation_dataset, batch_size=batch_size, shuffle=False)
-        if validation_sample_count > 0
+        if len(validation_dataset) > 0
         else None
     )
 
@@ -179,7 +191,9 @@ def train_attention_fusion(
             "epochs": epochs,
             "learning_rate": learning_rate,
             "validation_fraction": validation_fraction,
+            "test_fraction": test_fraction,
             "seed": seed,
+            "shuffle_splits": shuffle_splits,
             "shard_glob": shard_glob,
         },
         "history": history,
@@ -206,8 +220,12 @@ def train_attention_fusion(
     return {
         "checkpoint_path": str(checkpoint_path),
         "num_samples": sample_count,
-        "train_samples": train_sample_count,
-        "validation_samples": validation_sample_count,
+        "train_samples": len(train_dataset),
+        "validation_samples": len(validation_dataset),
+        "test_samples": len(test_dataset),
+        "train_repos": splits.train_repos,
+        "validation_repos": splits.validation_repos,
+        "test_repos": splits.test_repos,
         "embedding_dim": embedding_dim,
         "device": str(resolved_device),
         "curve_path": str(resolved_curve_path) if resolved_curve_path else None,
@@ -280,28 +298,6 @@ def _run_epoch(
         total_examples += batch_size
 
     return _metrics(total_loss, total_correct, total_examples)
-
-
-def _split_dataset(
-    dataset: TensorDataset,
-    sample_count: int,
-    validation_fraction: float,
-    seed: int,
-) -> tuple[Dataset, Dataset, int, int]:
-    validation_size = int(round(sample_count * validation_fraction))
-    if sample_count > 1:
-        validation_size = min(max(validation_size, 1), sample_count - 1)
-    else:
-        validation_size = 0
-
-    train_size = sample_count - validation_size
-    generator = torch.Generator().manual_seed(seed)
-    train_dataset, validation_dataset = random_split(
-        dataset,
-        [train_size, validation_size],
-        generator=generator,
-    )
-    return train_dataset, validation_dataset, train_size, validation_size
 
 
 def plot_training_curves(
@@ -418,7 +414,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--validation-fraction", type=float, default=0.2)
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--test-fraction", type=float, default=0.2)
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--no-shuffle-splits", action="store_true")
     parser.add_argument("--model-dim", type=int, default=128)
     parser.add_argument("--attention-dim", type=int, default=64)
     parser.add_argument("--classifier-hidden-dim", type=int, default=128)
@@ -446,7 +444,9 @@ def main(argv: list[str] | None = None) -> int:
         epochs=args.epochs,
         learning_rate=args.learning_rate,
         validation_fraction=args.validation_fraction,
+        test_fraction=args.test_fraction,
         seed=args.seed,
+        shuffle_splits=not args.no_shuffle_splits,
         model_dim=args.model_dim,
         attention_dim=args.attention_dim,
         classifier_hidden_dim=args.classifier_hidden_dim,
