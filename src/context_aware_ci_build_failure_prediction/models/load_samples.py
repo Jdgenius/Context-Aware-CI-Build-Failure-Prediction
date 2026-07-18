@@ -297,6 +297,7 @@ def split_sample_table_by_repo(
 
     train_repos, validation_repos, test_repos = _split_repos(
         repos=repos,
+        repo_to_indices=repo_to_indices,
         validation_fraction=validation_fraction,
         test_fraction=test_fraction,
     )
@@ -318,32 +319,63 @@ def split_sample_table_by_repo(
 def _split_repos(
     *,
     repos: list[str],
+    repo_to_indices: OrderedDict[str, list[int]],
     validation_fraction: float,
     test_fraction: float,
 ) -> tuple[list[str], list[str], list[str]]:
-    repo_count = len(repos)
-    validation_count = int(round(repo_count * validation_fraction))
-    test_count = int(round(repo_count * test_fraction))
+    if not repos:
+        return [], [], []
 
-    if repo_count >= 3:
-        if validation_fraction > 0 and validation_count == 0:
-            validation_count = 1
-        if test_fraction > 0 and test_count == 0:
-            test_count = 1
+    total_samples = sum(len(indices) for indices in repo_to_indices.values())
+    target_sample_counts = {
+        "train": total_samples * (1.0 - validation_fraction - test_fraction),
+        "validation": total_samples * validation_fraction,
+        "test": total_samples * test_fraction,
+    }
+    split_repos: dict[str, list[str]] = {
+        "train": [],
+        "validation": [],
+        "test": [],
+    }
+    split_sample_counts = {
+        "train": 0,
+        "validation": 0,
+        "test": 0,
+    }
+    split_order = tuple(
+        split
+        for split in ("train", "validation", "test")
+        if target_sample_counts[split] > 0
+    )
+    repo_order = {repo: index for index, repo in enumerate(repos)}
 
-    while validation_count + test_count > max(repo_count - 1, 0):
-        if test_count >= validation_count and test_count > 0:
-            test_count -= 1
-        elif validation_count > 0:
-            validation_count -= 1
-        else:
-            break
+    repos_by_size = sorted(
+        repos,
+        key=lambda repo: (-len(repo_to_indices[repo]), repo_order[repo]),
+    )
+    for repo in repos_by_size:
+        repo_size = len(repo_to_indices[repo])
+        best_split = max(
+            split_order,
+            key=lambda split: (
+                (
+                    target_sample_counts[split] - split_sample_counts[split]
+                ) / max(target_sample_counts[split], 1.0),
+                -abs(
+                    target_sample_counts[split]
+                    - (split_sample_counts[split] + repo_size)
+                ) / max(target_sample_counts[split], 1.0),
+                -split_order.index(split),
+            ),
+        )
+        split_repos[best_split].append(repo)
+        split_sample_counts[best_split] += repo_size
 
-    train_count = repo_count - validation_count - test_count
-    train_repos = repos[:train_count]
-    validation_repos = repos[train_count:train_count + validation_count]
-    test_repos = repos[train_count + validation_count:]
-    return train_repos, validation_repos, test_repos
+    return (
+        split_repos["train"],
+        split_repos["validation"],
+        split_repos["test"],
+    )
 
 
 def _indices_for_repos(

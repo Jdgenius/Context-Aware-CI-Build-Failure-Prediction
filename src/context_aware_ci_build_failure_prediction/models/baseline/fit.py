@@ -40,6 +40,8 @@ def train_random_forest_baseline(
     table_path: str | Path | None = None,
     bar_graph_path: str | Path | None = None,
     show_bar_graph: bool = True,
+    confusion_matrix_path: str | Path | None = None,
+    show_confusion_matrix: bool = True,
 ) -> dict[str, Any]:
     LOGGER.info("Loading samples from %s", source_dir)
     splits = load_sample_splits(
@@ -84,8 +86,8 @@ def train_random_forest_baseline(
     test_labels = splits.test.labels.to(torch.int64).numpy()
     
     #Remove later
-    test_features = test_features[:10]
-    test_labels = test_labels[:10]
+    #test_features = test_features[:10]
+    #test_labels = test_labels[:10]
 
     model = create_random_forest_classifier(
         n_estimators=n_estimators,
@@ -113,12 +115,25 @@ def train_random_forest_baseline(
     test_predictions = model.predict(test_features).astype(int).tolist()
     test_labels_list = test_labels.astype(int).tolist()
     metrics = binary_classification_metrics(test_labels_list, test_predictions)
+    confusion_matrix = build_binary_confusion_matrix(
+        labels=test_labels_list,
+        predictions=test_predictions,
+    )
     LOGGER.info(
         "Test metrics: accuracy=%.4f precision=%.4f recall=%.4f f1=%.4f",
         metrics["accuracy"],
         metrics["precision"],
         metrics["recall"],
         metrics["f1"],
+    )
+
+    print("\nRandom forest test-set confusion matrix:")
+    print(confusion_matrix_to_dataframe(confusion_matrix).to_string())
+    resolved_confusion_matrix_path = plot_confusion_matrix(
+        confusion_matrix=confusion_matrix,
+        title="Random Forest Test Confusion Matrix",
+        confusion_matrix_path=confusion_matrix_path,
+        show=show_confusion_matrix,
     )
 
     table = build_test_result_table(
@@ -159,6 +174,7 @@ def train_random_forest_baseline(
             "n_jobs": n_jobs,
         },
         "validation_metrics": validation_metrics,
+        "confusion_matrix": confusion_matrix,
         "feature_dim": int(splits.train.features.shape[1]),
     }
     with model_path.open("wb") as file:
@@ -176,7 +192,13 @@ def train_random_forest_baseline(
         "test_repos": splits.test_repos,
         "validation_metrics": validation_metrics,
         "metrics": metrics,
+        "confusion_matrix": confusion_matrix,
         "table_path": str(table_path) if table_path is not None else None,
+        "confusion_matrix_path": (
+            str(resolved_confusion_matrix_path)
+            if resolved_confusion_matrix_path is not None
+            else None
+        ),
         "bar_graph_path": (
             str(resolved_bar_graph_path)
             if resolved_bar_graph_path is not None
@@ -204,6 +226,104 @@ def build_test_result_table(
         )
 
     return pd.DataFrame(rows)
+
+
+def build_binary_confusion_matrix(
+    *,
+    labels: list[int],
+    predictions: list[int],
+) -> dict[str, int | list[list[int]]]:
+    true_negative = sum(
+        1 for label, prediction in zip(labels, predictions, strict=True)
+        if label == 0 and prediction == 0
+    )
+    false_positive = sum(
+        1 for label, prediction in zip(labels, predictions, strict=True)
+        if label == 0 and prediction == 1
+    )
+    false_negative = sum(
+        1 for label, prediction in zip(labels, predictions, strict=True)
+        if label == 1 and prediction == 0
+    )
+    true_positive = sum(
+        1 for label, prediction in zip(labels, predictions, strict=True)
+        if label == 1 and prediction == 1
+    )
+    return {
+        "true_negative": true_negative,
+        "false_positive": false_positive,
+        "false_negative": false_negative,
+        "true_positive": true_positive,
+        "matrix": [
+            [true_negative, false_positive],
+            [false_negative, true_positive],
+        ],
+    }
+
+
+def confusion_matrix_to_dataframe(
+    confusion_matrix: dict[str, int | list[list[int]]],
+) -> pd.DataFrame:
+    matrix = confusion_matrix["matrix"]
+    return pd.DataFrame(
+        matrix,
+        index=["actual_0", "actual_1"],
+        columns=["predicted_0", "predicted_1"],
+    )
+
+
+def plot_confusion_matrix(
+    *,
+    confusion_matrix: dict[str, int | list[list[int]]],
+    title: str,
+    confusion_matrix_path: str | Path | None,
+    show: bool,
+) -> Path | None:
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError as exc:
+        raise ImportError(
+            "matplotlib is required for the confusion matrix plot."
+        ) from exc
+
+    matrix = confusion_matrix["matrix"]
+    figure, axis = plt.subplots(figsize=(5, 4))
+    image = axis.imshow(matrix, cmap="Blues")
+    axis.set_title(title)
+    axis.set_xlabel("Predicted label")
+    axis.set_ylabel("Actual label")
+    axis.set_xticks([0, 1])
+    axis.set_yticks([0, 1])
+    axis.set_xticklabels(["0", "1"])
+    axis.set_yticklabels(["0", "1"])
+
+    for actual_index, row in enumerate(matrix):
+        for predicted_index, value in enumerate(row):
+            axis.text(
+                predicted_index,
+                actual_index,
+                str(value),
+                ha="center",
+                va="center",
+                color="white" if value > max(max(row) for row in matrix) / 2 else "black",
+            )
+
+    figure.colorbar(image, ax=axis, fraction=0.046, pad=0.04)
+    figure.tight_layout()
+
+    resolved_path = (
+        Path(confusion_matrix_path) if confusion_matrix_path is not None else None
+    )
+    if resolved_path is not None:
+        resolved_path.parent.mkdir(parents=True, exist_ok=True)
+        figure.savefig(resolved_path, dpi=150, bbox_inches="tight")
+        LOGGER.info("Saved confusion matrix plot to %s", resolved_path)
+
+    if show:
+        plt.show()
+
+    plt.close(figure)
+    return resolved_path
 
 
 def plot_commit_accuracy_bar_graph(
@@ -276,6 +396,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--table-path")
     parser.add_argument("--bar-graph-path")
     parser.add_argument("--no-show-bar-graph", action="store_true")
+    parser.add_argument("--confusion-matrix-path")
+    parser.add_argument("--no-show-confusion-matrix", action="store_true")
     parser.add_argument("--summary-path")
     parser.add_argument(
         "--log-level",
@@ -301,6 +423,8 @@ def main(argv: list[str] | None = None) -> int:
         table_path=args.table_path,
         bar_graph_path=args.bar_graph_path,
         show_bar_graph=not args.no_show_bar_graph,
+        confusion_matrix_path=args.confusion_matrix_path,
+        show_confusion_matrix=not args.no_show_confusion_matrix,
     )
 
     if args.summary_path:
